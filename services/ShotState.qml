@@ -144,7 +144,12 @@ Singleton {
         });
     }
 
-    function windowJob(title, path) {
+    // `selector` matches a claimed semantic role ("minkamon.disk") first,
+    // falling back to exact title for windows that never claimed one.
+    function windowJob(
+        selector, 
+        path,
+    ) {
         ShojiClient.request("workspaces.get", undefined, (result, error) => {
             if (!result || !result.monitors) {
                 console.error("minkashot: no workspace view for win capture");
@@ -155,7 +160,11 @@ Singleton {
                     if (!ws.active)
                         continue;
                     for (const w of ws.windows) {
-                        if (w.minimized || !w.rect || w.title !== title)
+                        if (w.minimized || !w.rect
+                            || (
+                                w.role !== selector && w.title !== selector
+                            )
+                        )
                             continue;
                         const screen = Quickshell.screens.find(
                             s => s.name === mon.name);
@@ -175,7 +184,10 @@ Singleton {
                     }
                 }
             }
-            console.error("minkashot: no window titled", title);
+            console.error(
+                "minkashot: no window matching",
+                selector,
+            );
         });
     }
 
