@@ -213,5 +213,20 @@ Singleton {
         }
     }
 
+    // Hard guarantee against the 23/7 frozen-screen incident: a silent job
+    // that hasn't saved and disarmed within the timeout is aborted rather
+    // than left holding a stale frozen frame over the user's screen. The
+    // overlay is input-transparent in silent mode, so a wedged one is worse
+    // than invisible — the user interacts blind with windows they can't
+    // see.
+    Timer {
+        interval: 6000
+        running: root.armed && root.silent
+        onTriggered: {
+            console.error("minkashot: silent job timed out, disarming");
+            root.disarm();
+        }
+    }
+
     Component.onCompleted: Quickshell.execDetached(["mkdir", "-p", saveDir])
 }

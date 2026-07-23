@@ -55,7 +55,31 @@ PanelWindow {
             dragOrigin = null;
             hoverWindow = null;
             cursor = Qt.point(-1, -1);
+            // Drop any stale frame from a previous arm so hasContent
+            // re-fires on the fresh one — silent jobs key off that signal,
+            // and a save must never grab last arm's pixels.
+            view.captureSource = null;
+            view.captureSource = modelData;
             view.captureFrame();
+            captureRetry.start();
+        } else {
+            captureRetry.stop();
+        }
+    }
+
+    // The first captureFrame can race screencopy context setup ("no
+    // recording context is ready"); retry until the frame lands. Bounded by
+    // ShotState's silent-job watchdog / the user's Esc in interactive mode.
+    Timer {
+        id: captureRetry
+
+        interval: 250
+        repeat: true
+        onTriggered: {
+            if (view.hasContent)
+                stop();
+            else
+                view.captureFrame();
         }
     }
 
