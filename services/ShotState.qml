@@ -109,10 +109,13 @@ Singleton {
         return Quickshell.screens.length > 0 ? Quickshell.screens[0].name : "";
     }
 
+    // Order matters: overlays react to jobChanged, and their check reads
+    // `silent` — it must already be true when the job lands (the 23/7
+    // frozen-screen incident was this exact race, inverted).
     function startJob(j) {
         disarm();
-        job = j;
         silent = true;
+        job = j;
         armed = true;
     }
 
