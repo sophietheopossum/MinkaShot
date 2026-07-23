@@ -1,7 +1,9 @@
 pragma Singleton
 import Quickshell
 import QtQuick
-import "../../MinkaLink"
+// Through the config-root symlink: Quickshell only honours qmldir
+// singleton registration for paths inside the shell root.
+import "../MinkaLink"
 
 // MinkaShot's capture state machine. Interactive flow: freeze every output,
 // loupe active, Enter saves (region if drawn, else the pointed screen), Esc
