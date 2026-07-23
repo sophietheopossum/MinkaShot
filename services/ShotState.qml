@@ -28,6 +28,12 @@ Singleton {
     property var job: null
     // Freeze-time window rects (global logical coords, halo stripped).
     property var windowRects: []
+    // Screencopy photographs the composited screen, so a window capture
+    // must raise its target first or the crop bakes in whatever sat above
+    // it. These carry the raise dance: the job waiting for the restack to
+    // settle, and the previously-focused window to hand focus back to.
+    property var pendingRaiseJob: null
+    property var restoreFocusId: null
 
     // ShojiWM window rects include the 14px edge-drag halo ring; saves and
     // pick targets want the visible border instead.
@@ -48,14 +54,30 @@ Singleton {
         armed = true;
     }
 
-    function disarm() {
+    // Teardown without side effects — used both when a job finishes and
+    // when a new one starts.
+    function reset() {
         countdownTimer.stop();
         settleTimer.stop();
+        raiseSettle.stop();
         armed = false;
         silent = false;
         pickMode = false;
         job = null;
+        pendingRaiseJob = null;
         countdown = 0;
+    }
+
+    function disarm() {
+        reset();
+        // If a window capture raised its target, hand focus back. Runs on
+        // save completion, cancel, and the watchdog alike.
+        if (restoreFocusId !== null) {
+            ShojiClient.send("windows.activate", {
+                windowId: restoreFocusId,
+            });
+            restoreFocusId = null;
+        }
     }
 
     // Re-freeze after the configured delay. Overlays unmap immediately and
@@ -155,6 +177,12 @@ Singleton {
                 console.error("minkashot: no workspace view for win capture");
                 return;
             }
+            let focusedId = null;
+            for (const mon of result.monitors)
+                for (const ws of mon.workspaces)
+                    for (const w of ws.windows)
+                        if (ws.active && w.focused)
+                            focusedId = w.id;
             for (const mon of result.monitors) {
                 for (const ws of mon.workspaces) {
                     if (!ws.active)
@@ -170,7 +198,7 @@ Singleton {
                             s => s.name === mon.name);
                         if (!screen)
                             continue;
-                        root.startJob({
+                        const job = {
                             screenName: mon.name,
                             rect: {
                                 x: w.rect.x + root.chromeInset - screen.x,
@@ -179,7 +207,22 @@ Singleton {
                                 height: w.rect.height - root.chromeInset * 2,
                             },
                             path,
-                        });
+                        };
+                        if (w.focused) {
+                            // Already on top: freeze straight away.
+                            root.startJob(job);
+                        } else {
+                            // Raise it so the crop shows the window, not
+                            // whatever was stacked above it; capture once
+                            // the restack has reached the screen, then
+                            // disarm() hands focus back.
+                            root.restoreFocusId = focusedId;
+                            ShojiClient.send("windows.activate", {
+                                windowId: w.id,
+                            });
+                            root.pendingRaiseJob = job;
+                            raiseSettle.restart();
+                        }
                         return;
                     }
                 }
@@ -189,6 +232,19 @@ Singleton {
                 selector,
             );
         });
+    }
+
+    // Restack-to-screen settle: the compositor needs a beat to raise the
+    // target and repaint before the freeze fires.
+    Timer {
+        id: raiseSettle
+
+        interval: 350
+        onTriggered: {
+            const j = root.pendingRaiseJob;
+            if (j !== null)
+                root.startJob(j);
+        }
     }
 
     // The compositor's Print keybind arrives as a broadcast.
