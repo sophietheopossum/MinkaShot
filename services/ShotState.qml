@@ -28,12 +28,6 @@ Singleton {
     property var job: null
     // Freeze-time window rects (global logical coords, halo stripped).
     property var windowRects: []
-    // Screencopy photographs the composited screen, so a window capture
-    // must raise its target first or the crop bakes in whatever sat above
-    // it. These carry the raise dance: the job waiting for the restack to
-    // settle, and the previously-focused window to hand focus back to.
-    property var pendingRaiseJob: null
-    property var restoreFocusId: null
 
     // ShojiWM window rects include the 14px edge-drag halo ring; saves and
     // pick targets want the visible border instead.
@@ -54,30 +48,18 @@ Singleton {
         armed = true;
     }
 
-    // Teardown without side effects — used both when a job finishes and
-    // when a new one starts.
-    function reset() {
+    // Full teardown
+    // used both when a job finishes and when a new one starts.
+    // The `shot win` path no longer arms any overlay (MinkaCap
+    // captures out-of-process), so there is no focus to restore here.
+    function disarm() {
         countdownTimer.stop();
         settleTimer.stop();
-        raiseSettle.stop();
         armed = false;
         silent = false;
         pickMode = false;
         job = null;
-        pendingRaiseJob = null;
         countdown = 0;
-    }
-
-    function disarm() {
-        reset();
-        // If a window capture raised its target, hand focus back. Runs on
-        // save completion, cancel, and the watchdog alike.
-        if (restoreFocusId !== null) {
-            ShojiClient.send("windows.activate", {
-                windowId: restoreFocusId,
-            });
-            restoreFocusId = null;
-        }
     }
 
     // Re-freeze after the configured delay. Overlays unmap immediately and
