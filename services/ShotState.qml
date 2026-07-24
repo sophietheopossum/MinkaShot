@@ -149,84 +149,40 @@ Singleton {
     }
 
     // `selector` matches a claimed semantic role ("minkamon.disk") first,
-    // falling back to exact title for windows that never claimed one.
-    function windowJob(
-        selector, 
-        path,
-    ) {
+    // falling back to title.
+    // Resolves it to the window's title via the
+    // compositor view, then hands off to MinkaCap, which captures the
+    // window's OWN buffer through ext-image-copy-capture — occlusion-free,
+    // no raising, no focus theft, no overlay (so no frozen-screen risk on
+    // this path at all). Quickshell's ScreencopyView can't do toplevel
+    // capture on ShojiWM, hence the out-of-process helper.
+    function windowJob(selector, path) {
         ShojiClient.request("workspaces.get", undefined, (result, error) => {
             if (!result || !result.monitors) {
                 console.error("minkashot: no workspace view for win capture");
                 return;
             }
-            let focusedId = null;
+            let title = null;
             for (const mon of result.monitors)
                 for (const ws of mon.workspaces)
                     for (const w of ws.windows)
-                        if (ws.active && w.focused)
-                            focusedId = w.id;
-            for (const mon of result.monitors) {
-                for (const ws of mon.workspaces) {
-                    if (!ws.active)
-                        continue;
-                    for (const w of ws.windows) {
-                        if (w.minimized || !w.rect
-                            || (
-                                w.role !== selector && w.title !== selector
-                            )
-                        )
-                            continue;
-                        const screen = Quickshell.screens.find(
-                            s => s.name === mon.name);
-                        if (!screen)
-                            continue;
-                        const job = {
-                            screenName: mon.name,
-                            rect: {
-                                x: w.rect.x + root.chromeInset - screen.x,
-                                y: w.rect.y + root.chromeInset - screen.y,
-                                width: w.rect.width - root.chromeInset * 2,
-                                height: w.rect.height - root.chromeInset * 2,
-                            },
-                            path,
-                        };
-                        if (w.focused) {
-                            // Already on top: freeze straight away.
-                            root.startJob(job);
-                        } else {
-                            // Raise it so the crop shows the window, not
-                            // whatever was stacked above it; capture once
-                            // the restack has reached the screen, then
-                            // disarm() hands focus back.
-                            root.restoreFocusId = focusedId;
-                            ShojiClient.send("windows.activate", {
-                                windowId: w.id,
-                            });
-                            root.pendingRaiseJob = job;
-                            raiseSettle.restart();
-                        }
-                        return;
-                    }
-                }
+                        if (ws.active && !w.minimized
+                            && (w.role === selector || w.title === selector))
+                            title = w.title;
+            if (title === null) {
+                console
+                    .error("minkashot: no window matching", selector);
+                return;
             }
-            console.error(
-                "minkashot: no window matching",
-                selector,
-            );
+            const bin = Quickshell
+                .env("MINKA_CAP_BIN") || "/usr/bin/MinkaCap";
+            const out = (path !== undefined && path !== null
+                && path.length > 0) ? path : root.defaultPath();
+            Quickshell
+                .execDetached([bin, "grab", title, out]);
+            console
+                .log("minkashot: window capture ->", title, "via MinkaCap");
         });
-    }
-
-    // Restack-to-screen settle: the compositor needs a beat to raise the
-    // target and repaint before the freeze fires.
-    Timer {
-        id: raiseSettle
-
-        interval: 350
-        onTriggered: {
-            const j = root.pendingRaiseJob;
-            if (j !== null)
-                root.startJob(j);
-        }
     }
 
     // The compositor's Print keybind arrives as a broadcast.
