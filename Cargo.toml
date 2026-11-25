@@ -1,0 +1,29 @@
+[package]
+name = "minkashot"
+version = "0.1.0"
+edition = "2024"
+description = "MinkaShot: Minka's screenshot tool"
+publish = false
+
+# A library: MinkaDE's one binary (minka/, at the top of the checkout) runs it
+# under the name it was started as. Nothing is built from here alone.
+#
+# The QML tree beside this crate (shell.qml, modules/, services/) is still the
+# daemon the session runs, until the Rust one replaces it.
+[lib]
+name = "minkashot"
+path = "src/lib.rs"
+doctest = false
+
+[dependencies]
+# MinkaDE's log line (minka-note/, at the top of the checkout): one write(2) each.
+minka-note = { path = "../minka-note" }
+# The toolkit is MinkaDE's AntiWebUI submodule. "wayland-shell" brings the
+# outputs and the shm capture of them (and implies "wayland"); the PNG encoder
+# is anti_webui::app::headless.
+anti-webui = { path = "../AntiWebUI/src/anti-webui", default-features = false, features = ["wayland-shell"] }
+# The ShojiWM IPC, for the focused output.
+minka-ipc = { package = "MinkaIPC", path = "../MinkaIPC" }
+serde_json = "1"
+# renameat2(RENAME_NOREPLACE), so a default name never replaces an earlier shot.
+libc = "0.2"
