@@ -40,9 +40,15 @@ or focused. list prints each window's app id and title, a tab between.
              (minkashot full \"\" - | wl-copy -t image/png), and ./- is a file
 
 daemon runs the interactive screenshot's daemon, one per session, which
-Print arms. interactive arms it as Print does, cancel puts it back to idle,
-and status says what it is doing; each prints the daemon's answer. It shows
-nothing yet, and the session's Print is still the QML daemon's.
+Print arms: it freezes every output, and a drag, or a window picked with the
+toolbar's Window, makes a region. Esc lets go; Enter saves the region of the
+output the pointer is on, or all of it, under the default name, and the
+toolbar's copy puts it on the clipboard as image/png. Its retry freezes again
+after the delay it sets, and Print during that countdown freezes at once.
+Nothing else lets go but cancel, which also stops a countdown. interactive
+arms it as Print does, cancel puts it back to idle, and status says what it
+is doing; each prints the daemon's answer. The session's Print is still the
+QML daemon's.
 
 Exit status: 0 saved or answered, 1 the capture failed or timed out,
 2 usage, 3 no output or window of that name (or several windows, none
@@ -234,7 +240,7 @@ pub fn parse(args: &[OsString]) -> Result<Request, Failure> {
 
 /// Where a shot asked for goes: `-` is standard output, and a relative
 /// path is made absolute, so the path printed is one to use from anywhere.
-fn target(path: Option<&Path>) -> Result<save::Target, Failure> {
+pub(crate) fn target(path: Option<&Path>) -> Result<save::Target, Failure> {
     Ok(match path {
         Some(p) if p.as_os_str() == "-" => save::Target::Stdout,
         Some(p) => save::Target::Path(std::path::absolute(p).unwrap_or_else(|_| p.to_owned())),
@@ -256,17 +262,37 @@ pub fn shoot(shot: &Shot) -> Result<Option<PathBuf>, Failure> {
             "standard output is a terminal: pipe the PNG somewhere (| wl-copy -t image/png)".into(),
         ));
     }
-    let (crop, rgba) = match &shot.of {
-        Subject::Output { name, region } => output_pixels(name.clone(), *region)?,
-        Subject::Window(asked) => window_pixels(asked.clone())?,
+    let (crop, picture) = match &shot.of {
+        Subject::Output { name, region } => output_picture(name.clone(), *region)?,
+        Subject::Window(asked) => window_picture(asked.clone())?,
     };
-    let bytes = anti_webui::app::headless::encode_png(crop.width, crop.height, &rgba)
-        .map_err(|e| Failure::Write(format!("cannot encode the PNG: {e}")))?;
-    save::save(&target, &bytes).map_err(|e| cannot_write(&target, e))
+    write(&picture, crop, &target)
 }
 
-/// The crop of an output's picture a shot asks for, and its pixels.
-fn output_pixels(name: Option<String>, region: Option<Rect>) -> Result<(Crop, Vec<u8>), Failure> {
+/// Saves `crop` of `picture`, opaque, as a PNG at `target`, and gives the
+/// path written: none for standard output.
+pub(crate) fn write(
+    picture: &Bitmap,
+    crop: Crop,
+    target: &save::Target,
+) -> Result<Option<PathBuf>, Failure> {
+    let bytes = png(picture, crop)?;
+    save::save(target, &bytes).map_err(|e| cannot_write(target, e))
+}
+
+/// The bytes of a PNG file of `crop` of `picture`, opaque.
+pub(crate) fn png(picture: &Bitmap, crop: Crop) -> Result<Vec<u8>, Failure> {
+    let rgba = save::crop_rgba(picture, crop)
+        .ok_or_else(|| Failure::Capture("the picture's pixels are gone".into()))?;
+    anti_webui::app::headless::encode_png(crop.width, crop.height, &rgba)
+        .map_err(|e| Failure::Write(format!("cannot encode the PNG: {e}")))
+}
+
+/// An output's picture, and the crop of it a shot asks for.
+fn output_picture(
+    name: Option<String>,
+    region: Option<Rect>,
+) -> Result<(Crop, Arc<Bitmap>), Failure> {
     // Everything that waits on the compositor, under one bound.
     let (output, picture) = grab::within(grab::SHOT_TIMEOUT, move || {
         grab_for(name.as_deref(), region.as_ref())
@@ -279,26 +305,16 @@ fn output_pixels(name: Option<String>, region: Option<Rect>) -> Result<(Crop, Ve
             output.name, size.0, size.1
         ))
     })?;
-    let rgba = save::crop_rgba(&picture, crop)
-        .ok_or_else(|| Failure::Capture("the picture's pixels are gone".into()))?;
-    Ok((crop, rgba))
+    Ok((crop, picture))
 }
 
-/// A whole picture of the window asked for, and its pixels.
-fn window_pixels(asked: Option<String>) -> Result<(Crop, Vec<u8>), Failure> {
+/// A picture of the window asked for, all of it.
+fn window_picture(asked: Option<String>) -> Result<(Crop, Arc<Bitmap>), Failure> {
     let picture = grab::within(grab::SHOT_TIMEOUT, move || {
         let (window, what) = window_for(asked.as_deref())?;
         grab::picture(window, &what, grab::PICTURE_TIMEOUT)
     })?;
-    let crop = Crop {
-        x: 0,
-        y: 0,
-        width: picture.width(),
-        height: picture.height(),
-    };
-    let rgba = save::crop_rgba(&picture, crop)
-        .ok_or_else(|| Failure::Capture("the picture's pixels are gone".into()))?;
-    Ok((crop, rgba))
+    Ok((Crop::whole(picture.width(), picture.height()), picture))
 }
 
 /// Every window, as the toolkit lists them, or why they cannot be had. A

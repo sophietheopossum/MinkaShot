@@ -10,6 +10,39 @@ pub struct Rect {
     pub height: f64,
 }
 
+impl Rect {
+    /// The rectangle with corners `a` and `b`, whichever way round: a drag
+    /// from `a` to `b`.
+    pub fn between(a: (f64, f64), b: (f64, f64)) -> Rect {
+        Rect {
+            x: a.0.min(b.0),
+            y: a.1.min(b.1),
+            width: (b.0 - a.0).abs(),
+            height: (b.1 - a.1).abs(),
+        }
+    }
+
+    /// What of it is on an output of this logical size: a drag past the
+    /// edge, or a window partly off the output, never makes a region bigger
+    /// than the frame. Nothing on it is a rectangle of no size at the edge.
+    pub fn clamped(&self, width: f64, height: f64) -> Rect {
+        let x = self.x.clamp(0.0, width);
+        let y = self.y.clamp(0.0, height);
+        Rect {
+            x,
+            y,
+            width: ((self.x + self.width).clamp(0.0, width) - x).max(0.0),
+            height: ((self.y + self.height).clamp(0.0, height) - y).max(0.0),
+        }
+    }
+
+    /// Whether the point is in it, as the QML tested a window: the left and
+    /// top edges in, the right and bottom out.
+    pub fn contains(&self, x: f64, y: f64) -> bool {
+        x >= self.x && x < self.x + self.width && y >= self.y && y < self.y + self.height
+    }
+}
+
 /// A rectangle of a picture, in its pixels, inside it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Crop {
@@ -17,6 +50,18 @@ pub struct Crop {
     pub y: u32,
     pub width: u32,
     pub height: u32,
+}
+
+impl Crop {
+    /// All of a picture this size.
+    pub fn whole(width: u32, height: u32) -> Crop {
+        Crop {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        }
+    }
 }
 
 /// Reads `x,y,w,h`: four numbers, fractions allowed, the width and height
@@ -58,7 +103,7 @@ pub fn overlaps(rect: &Rect, logical: (i32, i32)) -> bool {
 
 /// Rounds as JavaScript's `Math.round`, which the QML crop used: halves go
 /// up, -2.5 to -2.
-fn js_round(v: f64) -> f64 {
+pub(crate) fn js_round(v: f64) -> f64 {
     (v + 0.5).floor()
 }
 
@@ -92,12 +137,7 @@ pub fn crop(
         return None;
     }
     let Some(r) = rect else {
-        return Some(Crop {
-            x: 0,
-            y: 0,
-            width: pw,
-            height: ph,
-        });
+        return Some(Crop::whole(pw, ph));
     };
     let sx = axis_scale(pw, logical.0, scale);
     let sy = axis_scale(ph, logical.1, scale);
@@ -248,6 +288,87 @@ mod tests {
         assert!(overlaps(&rect(-5.0, -5.0, 6.0, 6.0), (1536, 864)));
         assert!(!overlaps(&rect(1536.0, 0.0, 10.0, 10.0), (1536, 864)));
         assert!(!overlaps(&rect(-10.0, 0.0, 10.0, 10.0), (1536, 864)));
+    }
+
+    #[test]
+    fn a_drag_is_the_same_rectangle_either_way_round() {
+        let want = rect(10.0, 20.0, 30.0, 5.5);
+        for (a, b) in [
+            ((10.0, 20.0), (40.0, 25.5)),
+            ((40.0, 25.5), (10.0, 20.0)),
+            ((10.0, 25.5), (40.0, 20.0)),
+            ((40.0, 20.0), (10.0, 25.5)),
+        ] {
+            assert_eq!(Rect::between(a, b), want, "{a:?} to {b:?}");
+        }
+        assert_eq!(Rect::between((3.0, 4.0), (3.0, 4.0)).width, 0.0);
+    }
+
+    #[test]
+    fn clamping_keeps_what_is_on_the_output() {
+        // eDP-1, 1536x864 logical.
+        let on = |r: Rect| r.clamped(1536.0, 864.0);
+        let inside = rect(10.0, 20.0, 300.0, 40.0);
+        assert_eq!(on(inside), inside);
+        // Past the right and bottom edges, and before the left and top.
+        assert_eq!(
+            on(rect(1500.0, 800.0, 100.0, 100.0)),
+            rect(1500.0, 800.0, 36.0, 64.0)
+        );
+        assert_eq!(on(rect(-20.0, -5.5, 50.0, 10.0)), rect(0.0, 0.0, 30.0, 4.5));
+        // Bigger than the output on every side: the output.
+        assert_eq!(
+            on(rect(-100.0, -100.0, 4000.0, 3000.0)),
+            rect(0.0, 0.0, 1536.0, 864.0)
+        );
+        // Off it altogether: nothing, at the edge.
+        let off = on(rect(2000.0, 10.0, 50.0, 50.0));
+        assert_eq!((off.x, off.width), (1536.0, 0.0));
+        let off = on(rect(10.0, -80.0, 50.0, 50.0));
+        assert_eq!((off.y, off.height), (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_clamped_region_crops_inside_the_picture_at_each_scale() {
+        // Whatever is dragged, the crop stays inside the picture: the save
+        // can never read past it.
+        for (logical, scale, picture) in [
+            ((1920, 515), 1.0, (1920, 515)),
+            ((1536, 864), 1.25, (1920, 1080)),
+            ((1920, 1080), 2.0, (3840, 2160)),
+        ] {
+            let (w, h) = (logical.0 as f64, logical.1 as f64);
+            for r in [
+                rect(-50.0, -50.0, w + 100.0, h + 100.0),
+                rect(w - 10.4, h - 10.4, 50.0, 50.0),
+                rect(0.0, 0.0, w, h),
+                rect(w / 2.0, h / 2.0, w, h),
+            ] {
+                let c = crop(Some(&r.clamped(w, h)), logical, scale, picture)
+                    .expect("a region on the output");
+                assert!(
+                    c.x + c.width <= picture.0 && c.y + c.height <= picture.1,
+                    "{r:?} at {scale}: {c:?}"
+                );
+            }
+            // All of it, dragged corner to corner, is all of the picture.
+            assert_eq!(
+                crop(Some(&rect(0.0, 0.0, w, h)), logical, scale, picture),
+                Some(crop_of(0, 0, picture.0, picture.1))
+            );
+        }
+    }
+
+    #[test]
+    fn a_point_is_in_by_its_left_and_top_edges() {
+        let r = rect(10.0, 20.0, 30.0, 40.0);
+        assert!(r.contains(10.0, 20.0));
+        assert!(r.contains(39.9, 59.9));
+        assert!(!r.contains(40.0, 30.0));
+        assert!(!r.contains(20.0, 60.0));
+        assert!(!r.contains(9.9, 30.0));
+        // A window inset to nothing contains nothing.
+        assert!(!rect(10.0, 10.0, -4.0, 20.0).contains(9.0, 15.0));
     }
 
     #[test]

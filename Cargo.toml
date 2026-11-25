@@ -9,7 +9,7 @@ publish = false
 # under the name it was started as. Nothing is built from here alone.
 #
 # The QML tree beside this crate (shell.qml, modules/, services/) is still the
-# daemon the session runs, until the Rust one replaces it.
+# daemon the session runs, until the Rust one (minkashot daemon) replaces it.
 [lib]
 name = "minkashot"
 path = "src/lib.rs"
@@ -26,6 +26,10 @@ anti-webui = { path = "../AntiWebUI/src/anti-webui", default-features = false, f
 minka-ipc = { package = "MinkaIPC", path = "../MinkaIPC" }
 # The daemon's lock, and the commands to it (minka-instance/, at the top).
 minka-instance = { path = "../minka-instance" }
+# Material 3 Expressive components in the compact sizes, drawn in MinkaDE's
+# palette, as in every Minka app. The overlay's toolbar is made of them.
+anti-webui-md3e = { path = "../AntiWebUI/src/anti-webui-md3e" }
+proustite = { path = "../Proustite" }
 serde_json = "1"
 # renameat2(RENAME_NOREPLACE), so a default name never replaces an earlier shot.
 libc = "0.2"

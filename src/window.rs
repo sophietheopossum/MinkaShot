@@ -143,6 +143,20 @@ pub fn rects(view: &Value) -> Vec<WindowRect> {
     rects
 }
 
+/// The window a pick in the overlay of `output` takes at `at`, a point in
+/// global logical pixels: the topmost of `windows` (top first, as [`rects`]
+/// gives them) on that output with the point in it, as the QML's
+/// `windowAt`. A window is on the output the compositor says it is on.
+pub fn window_at<'a>(
+    windows: &'a [WindowRect],
+    output: &str,
+    at: (f64, f64),
+) -> Option<&'a WindowRect> {
+    windows
+        .iter()
+        .find(|w| w.monitor == output && w.rect.contains(at.0, at.1))
+}
+
 /// The output under the pointer in a `workspaces.get` view.
 pub fn current_monitor(view: &Value) -> Option<String> {
     view.get("currentMonitor")
@@ -446,6 +460,57 @@ mod tests {
         assert_eq!(current_monitor(&view).as_deref(), Some("DP-1"));
         assert_eq!(current_monitor(&json!({"currentMonitor": ""})), None);
         assert_eq!(current_monitor(&json!({})), None);
+    }
+
+    /// The QML's `windowAt`, on a view with windows over each other, on two
+    /// outputs side by side.
+    #[test]
+    fn a_pick_takes_the_topmost_window_on_its_output() {
+        let window = |title: &str, rect: [f64; 4], focused_at: f64| {
+            json!({
+                "title": title, "minimized": false, "lastFocusedAt": focused_at,
+                "rect": {"x": rect[0], "y": rect[1], "width": rect[2], "height": rect[3]},
+            })
+        };
+        // DP-1 is 1920 wide at 0,0; eDP-1 is right of it, at 1920,0.
+        let view = json!({
+            "monitors": [
+                {"name": "DP-1", "workspaces": [{"active": true, "windows": [
+                    window("under", [100.0, 100.0, 800.0, 600.0], 1000.0),
+                    window("over", [500.0, 300.0, 400.0, 300.0], 3000.0),
+                    // Reaches onto eDP-1, but the compositor puts it on DP-1.
+                    window("straddling", [1700.0, 0.0, 400.0, 200.0], 500.0),
+                ]}]},
+                {"name": "eDP-1", "workspaces": [
+                    {"active": true, "windows": [
+                        window("edp", [1920.0, 0.0, 600.0, 400.0], 2000.0),
+                    ]},
+                    {"active": false, "windows": [
+                        window("hidden away", [1920.0, 0.0, 1536.0, 864.0], 9000.0),
+                    ]},
+                ]},
+            ],
+        });
+        let windows = rects(&view);
+        let at = |output: &str, x: f64, y: f64| {
+            window_at(&windows, output, (x, y)).map(|w| w.title.as_str())
+        };
+        // Where two overlap, the one focused last.
+        assert_eq!(at("DP-1", 600.0, 400.0), Some("over"));
+        // Where only the lower one is.
+        assert_eq!(at("DP-1", 200.0, 200.0), Some("under"));
+        // The 14 px ring round a window is not the window.
+        assert_eq!(at("DP-1", 110.0, 200.0), None);
+        assert_eq!(at("DP-1", 114.0, 200.0), Some("under"));
+        // Empty desktop.
+        assert_eq!(at("DP-1", 1500.0, 800.0), None);
+        // eDP-1's window, and not the one on a workspace not shown.
+        assert_eq!(at("eDP-1", 2000.0, 100.0), Some("edp"));
+        assert_eq!(at("eDP-1", 3000.0, 600.0), None);
+        // A window is picked on its own output only.
+        assert_eq!(at("eDP-1", 1950.0, 100.0), Some("edp"));
+        assert_eq!(at("DP-1", 1950.0, 100.0), Some("straddling"));
+        assert_eq!(at("HDMI-A-3", 600.0, 400.0), None);
     }
 
     #[test]

@@ -19,18 +19,28 @@
 //! which the session runs with `qs`. `minkashot daemon` is the Rust daemon
 //! that is to replace it (`daemon.rs`): one per session, it hears Print and
 //! answers `minkashot interactive|cancel|status`, and steps through an arm
-//! (`state.rs`), but shows nothing yet. With no arguments this prints its
-//! usage, so nobody starts a daemon by accident.
+//! (`state.rs`). An arm freezes every output under an overlay showing its
+//! frame (`overlay.rs`), with the QML's crosshair, loupe and toolbar
+//! (`toolbar.rs`), where a drag or a picked window makes a region. Esc lets
+//! go; Enter saves the region, or the output whole, and the toolbar's copy
+//! puts it on the clipboard instead, the frames staying up, and saying why,
+//! if either fails. The toolbar's retry freezes again after its delay,
+//! counted down on a layer of its own (`countdown.rs`). With no arguments
+//! this prints its usage, so nobody starts a daemon by accident.
 //!
 //! The picture and its PNG bytes are made apart from where they go
 //! (`save.rs`), so the bytes can go to the clipboard instead.
 
 mod cli;
+mod countdown;
 mod daemon;
 mod geometry;
 mod grab;
+mod overlay;
 mod save;
 mod state;
+mod theme;
+mod toolbar;
 mod window;
 
 use std::process::ExitCode;
