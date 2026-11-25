@@ -15,12 +15,14 @@
 //! MinkaCap, the window capture this replaces, is a name of this too, until
 //! the QML daemon that runs it is gone: see [`cap_main`].
 //!
-//! The interactive overlay (Print) is still the QML tree beside this crate,
-//! which the session runs with `qs`. `minkashot daemon` is the Rust daemon
-//! that is to replace it (`daemon.rs`): one per session, it hears Print and
-//! answers `minkashot interactive|cancel|status`, and steps through an arm
-//! (`state.rs`). An arm freezes every output under an overlay showing its
-//! frame (`overlay.rs`), with the QML's crosshair, loupe and toolbar
+//! The interactive overlay (Print) is `minkashot daemon` (`daemon.rs`),
+//! which replaces the QML tree beside this crate. The session starts it
+//! through minka-keep (`packaging/minka-keep`), which logs it to
+//! `~/.local/state/minka/minkashot.log` and restarts it if it dies. One per
+//! session, it hears Print and answers `minkashot interactive|cancel|status`,
+//! and steps through an arm (`state.rs`). An arm freezes every output under
+//! an overlay showing its frame (`overlay.rs`), with the QML's crosshair,
+//! loupe and toolbar
 //! (`toolbar.rs`), where a drag or a picked window makes a region. Esc lets
 //! go; Enter saves the region, or the output whole, and the toolbar's copy
 //! puts it on the clipboard instead, the frames staying up, and saying why,

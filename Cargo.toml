@@ -8,8 +8,9 @@ publish = false
 # A library: MinkaDE's one binary (minka/, at the top of the checkout) runs it
 # under the name it was started as. Nothing is built from here alone.
 #
-# The QML tree beside this crate (shell.qml, modules/, services/) is still the
-# daemon the session runs, until the Rust one (minkashot daemon) replaces it.
+# The QML tree beside this crate (shell.qml, modules/, services/) is the old
+# daemon. The session starts `minkashot daemon` through minka-keep instead
+# (25/11/2026), and the tree stays installed until it is deleted.
 [lib]
 name = "minkashot"
 path = "src/lib.rs"

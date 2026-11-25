@@ -47,8 +47,8 @@ toolbar's copy puts it on the clipboard as image/png. Its retry freezes again
 after the delay it sets, and Print during that countdown freezes at once.
 Nothing else lets go but cancel, which also stops a countdown. interactive
 arms it as Print does, cancel puts it back to idle, and status says what it
-is doing; each prints the daemon's answer. The session's Print is still the
-QML daemon's.
+is doing; each prints the daemon's answer. The session starts the daemon
+through minka-keep, which logs it to ~/.local/state/minka/minkashot.log.
 
 Exit status: 0 saved or answered, 1 the capture failed or timed out,
 2 usage, 3 no output or window of that name (or several windows, none
