@@ -105,7 +105,7 @@ pub fn crop(
         let start = js_round(at * s);
         let end = start + js_round(len * s).max(1.0);
         let (start, end) = (start.max(0.0), end.min(limit as f64));
-        (end > start).then(|| (start as u32, (end - start) as u32))
+        (end > start).then_some((start as u32, (end - start) as u32))
     };
     let (x, width) = span(r.x, r.width, sx, pw)?;
     let (y, height) = span(r.y, r.height, sy, ph)?;

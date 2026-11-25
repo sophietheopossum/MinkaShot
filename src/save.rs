@@ -71,7 +71,7 @@ pub fn crop_rgba(picture: &Bitmap, crop: Crop) -> Option<Vec<u8>> {
             let start = (row * pw + x) * 4;
             rows.extend_from_slice(&pixels[start..start + w * 4]);
         }
-        for px in rows.chunks_exact_mut(4) {
+        for px in rows.as_chunks_mut::<4>().0 {
             px[3] = 255;
         }
         out = Some(rows);
