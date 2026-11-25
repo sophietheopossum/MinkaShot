@@ -1,5 +1,6 @@
-//! The command line: `minkashot full|region|win|list ...`. It maps no
+//! The command line: `minkashot full|region|win|list ...`, which maps no
 //! surface and takes no input: it captures, crops, saves and says where.
+//! Also `minkashot daemon`, and the commands to it (`daemon.rs`).
 
 use anti_webui::core::images::Bitmap;
 use anti_webui::shell::{LocalTime, Output, Toplevel};
@@ -10,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::daemon::{self, Command};
 use crate::geometry::{self, Crop, Rect};
 use crate::window::{self, Seen};
 use crate::{grab, save};
@@ -19,6 +21,8 @@ usage: minkashot full [<output>] [<path>]
        minkashot region <output> <x,y,w,h> [<path>]
        minkashot win [<window>] [<path>]
        minkashot list
+       minkashot interactive | cancel | status
+       minkashot daemon
 
 Takes a screenshot of one output, of a region of it, or of one window, and
 saves it as PNG. It shows nothing and takes no input. The path written is
@@ -35,11 +39,16 @@ or focused. list prints each window's app id and title, a tab between.
              - writes the PNG to standard output instead and prints no path
              (minkashot full \"\" - | wl-copy -t image/png), and ./- is a file
 
-Exit status: 0 saved, 1 the capture failed or timed out, 2 usage,
-3 no output or window of that name (or several windows, none focused),
-4 the file could not be written (a full disk, or a path that is a device, a
-pipe or a directory).
-The interactive screenshot (Print) is still the QML daemon's.";
+daemon runs the interactive screenshot's daemon, one per session, which
+Print arms. interactive arms it as Print does, cancel puts it back to idle,
+and status says what it is doing; each prints the daemon's answer. It shows
+nothing yet, and the session's Print is still the QML daemon's.
+
+Exit status: 0 saved or answered, 1 the capture failed or timed out,
+2 usage, 3 no output or window of that name (or several windows, none
+focused), 4 the file could not be written (a full disk, or a path that is a
+device, a pipe or a directory), 5 no daemon is running, 6 the daemon did
+not answer, or its lock could not be read.";
 
 /// What went wrong, and the exit status that says so.
 #[derive(Debug, PartialEq)]
@@ -54,6 +63,11 @@ pub enum Failure {
     NoWindow(String),
     /// The picture could not be saved.
     Write(String),
+    /// A command for the daemon, and none is running.
+    NoDaemon,
+    /// A command for the daemon, which did not answer, or whose lock could
+    /// not be read.
+    NoAnswer(String),
 }
 
 impl Failure {
@@ -63,6 +77,8 @@ impl Failure {
             Failure::Usage(_) => 2,
             Failure::UnknownOutput { .. } | Failure::NoWindow(_) => 3,
             Failure::Write(_) => 4,
+            Failure::NoDaemon => 5,
+            Failure::NoAnswer(_) => 6,
         }
     }
 }
@@ -73,7 +89,9 @@ impl fmt::Display for Failure {
             Failure::Capture(why)
             | Failure::Usage(why)
             | Failure::Write(why)
-            | Failure::NoWindow(why) => f.write_str(why),
+            | Failure::NoWindow(why)
+            | Failure::NoAnswer(why) => f.write_str(why),
+            Failure::NoDaemon => f.write_str("no minkashot daemon is running"),
             Failure::UnknownOutput { name, outputs } => {
                 write!(
                     f,
@@ -116,6 +134,10 @@ pub enum Request {
     Shot(Shot),
     /// The windows, one per line.
     List,
+    /// Run the daemon.
+    Daemon,
+    /// Send this to the daemon.
+    Tell(Command),
     Help,
 }
 
@@ -137,6 +159,12 @@ pub fn parse(args: &[OsString]) -> Result<Request, Failure> {
     };
     let path = |arg: Option<&OsString>| arg.filter(|p| !p.is_empty()).map(PathBuf::from);
     let too_many = |verb: &str| Failure::Usage(format!("too many arguments for {verb}"));
+    if let Some(command) = verb.to_str().and_then(Command::from_word) {
+        if !rest.is_empty() {
+            return Err(too_many(command.word()));
+        }
+        return Ok(Request::Tell(command));
+    }
     match verb.to_str() {
         Some("full") => {
             if rest.len() > 2 {
@@ -189,6 +217,12 @@ pub fn parse(args: &[OsString]) -> Result<Request, Failure> {
                 return Err(too_many("list"));
             }
             Ok(Request::List)
+        }
+        Some("daemon") => {
+            if !rest.is_empty() {
+                return Err(too_many("daemon"));
+            }
+            Ok(Request::Daemon)
         }
         Some("help" | "--help" | "-h") => Ok(Request::Help),
         _ => Err(Failure::Usage(format!(
@@ -367,6 +401,19 @@ pub fn run(args: &[OsString]) -> u8 {
                 }
             };
         }
+        Request::Daemon => return daemon::run(),
+        Request::Tell(command) => {
+            return match daemon::tell(command) {
+                Ok(answer) => {
+                    let _ = writeln!(std::io::stdout().lock(), "{answer}");
+                    0
+                }
+                Err(f) => {
+                    minka_note::note!("minkashot: {f}");
+                    f.code()
+                }
+            };
+        }
         Request::Shot(shot) => shot,
     };
     match shoot(&shot) {
@@ -420,6 +467,35 @@ mod tests {
         );
         assert_eq!(parse(&args(&["win", "", "-"])), Ok(win(None, Some("-"))));
         assert_eq!(parse(&args(&["list"])), Ok(Request::List));
+    }
+
+    #[test]
+    fn the_daemon_and_its_commands_take_nothing_more() {
+        assert_eq!(parse(&args(&["daemon"])), Ok(Request::Daemon));
+        assert_eq!(
+            parse(&args(&["interactive"])),
+            Ok(Request::Tell(Command::Interactive))
+        );
+        assert_eq!(
+            parse(&args(&["cancel"])),
+            Ok(Request::Tell(Command::Cancel))
+        );
+        assert_eq!(
+            parse(&args(&["status"])),
+            Ok(Request::Tell(Command::Status))
+        );
+        for bad in [
+            &["daemon", "now"][..],
+            &["status", "-v"],
+            &["cancel", ""],
+            &["interactive", "DP-1"],
+            &["Status"],
+        ] {
+            match parse(&args(bad)) {
+                Err(f @ Failure::Usage(_)) => assert_eq!(f.code(), 2),
+                other => panic!("{bad:?}: {other:?}"),
+            }
+        }
     }
 
     #[test]
@@ -528,6 +604,8 @@ mod tests {
         assert_eq!(unknown.code(), 3);
         assert_eq!(Failure::Write("x".into()).code(), 4);
         assert_eq!(Failure::NoWindow("x".into()).code(), 3);
+        assert_eq!(Failure::NoDaemon.code(), 5);
+        assert_eq!(Failure::NoAnswer("x".into()).code(), 6);
     }
 
     #[test]

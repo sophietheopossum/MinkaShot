@@ -16,16 +16,21 @@
 //! the QML daemon that runs it is gone: see [`cap_main`].
 //!
 //! The interactive overlay (Print) is still the QML tree beside this crate,
-//! which the session runs with `qs`. With no arguments this prints its usage:
-//! the Rust daemon comes later.
+//! which the session runs with `qs`. `minkashot daemon` is the Rust daemon
+//! that is to replace it (`daemon.rs`): one per session, it hears Print and
+//! answers `minkashot interactive|cancel|status`, and steps through an arm
+//! (`state.rs`), but shows nothing yet. With no arguments this prints its
+//! usage, so nobody starts a daemon by accident.
 //!
 //! The picture and its PNG bytes are made apart from where they go
 //! (`save.rs`), so the bytes can go to the clipboard instead.
 
 mod cli;
+mod daemon;
 mod geometry;
 mod grab;
 mod save;
+mod state;
 mod window;
 
 use std::process::ExitCode;

@@ -6,11 +6,16 @@
 //! which is what its capture takes. Roles are only in the compositor's view
 //! (`workspaces.get`), which gives each window's title and app id, so a role
 //! is found there and then matched to the list by those.
+//!
+//! The same view gives the daemon the windows to pick from in the overlay
+//! ([`rects`]) and the output under the pointer ([`current_monitor`]).
 
 use anti_webui::shell::Toplevel;
+use serde_json::Value;
 use std::time::Duration;
 
 use crate::cli::Failure;
+use crate::geometry::Rect;
 
 /// How long the compositor may take to say which window has a role.
 pub const ROLE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -47,38 +52,103 @@ pub struct Named {
     pub title: String,
 }
 
-/// The windows with `role` in a `workspaces.get` view: those on an active
-/// workspace and not minimised, as the QML MinkaShot looked for them.
-pub fn with_role(view: &serde_json::Value, role: &str) -> Vec<Named> {
-    let list = |v: &serde_json::Value, key: &str| {
-        v.get(key)
-            .and_then(|l| l.as_array())
-            .cloned()
-            .unwrap_or_default()
-    };
-    let text =
-        |v: &serde_json::Value, key: &str| v.get(key).and_then(|s| s.as_str()).map(str::to_owned);
-    let mut named = Vec::new();
+/// What ShojiWM's window rects have around the window itself: the 14 px
+/// ring that edge drags start in. A pick wants the visible border.
+pub const CHROME_INSET: f64 = 14.0;
+
+/// A window the overlay can pick, as the compositor placed it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WindowRect {
+    pub title: String,
+    /// The output it is on.
+    pub monitor: String,
+    /// In global logical pixels, [`CHROME_INSET`] taken off each side.
+    pub rect: Rect,
+    /// When it last had the keyboard, in Unix milliseconds; 0 for never.
+    pub last_focused_at: f64,
+}
+
+fn list<'a>(v: &'a Value, key: &str) -> &'a [Value] {
+    v.get(key)
+        .and_then(Value::as_array)
+        .map_or(&[], Vec::as_slice)
+}
+
+fn text(v: &Value, key: &str) -> Option<String> {
+    v.get(key).and_then(Value::as_str).map(str::to_owned)
+}
+
+/// The windows a `workspaces.get` view shows, each with its output's name:
+/// those on an active workspace and not minimised, as the QML MinkaShot
+/// took them.
+fn shown(view: &Value) -> Vec<(&str, &Value)> {
+    let mut shown = Vec::new();
     for monitor in list(view, "monitors") {
-        for workspace in list(&monitor, "workspaces") {
-            if workspace.get("active").and_then(|a| a.as_bool()) != Some(true) {
+        let name = monitor.get("name").and_then(Value::as_str).unwrap_or("");
+        for workspace in list(monitor, "workspaces") {
+            if workspace.get("active").and_then(Value::as_bool) != Some(true) {
                 continue;
             }
-            for w in list(&workspace, "windows") {
-                let minimized = w.get("minimized").and_then(|m| m.as_bool()) == Some(true);
-                if minimized || text(&w, "role").as_deref() != Some(role) {
-                    continue;
-                }
-                if let Some(title) = text(&w, "title") {
-                    named.push(Named {
-                        app_id: text(&w, "appId"),
-                        title,
-                    });
+            for w in list(workspace, "windows") {
+                if w.get("minimized").and_then(Value::as_bool) != Some(true) {
+                    shown.push((name, w));
                 }
             }
         }
     }
-    named
+    shown
+}
+
+/// The windows with `role` in a `workspaces.get` view (see [`shown`]).
+pub fn with_role(view: &Value, role: &str) -> Vec<Named> {
+    shown(view)
+        .into_iter()
+        .filter(|(_, w)| text(w, "role").as_deref() == Some(role))
+        .filter_map(|(_, w)| {
+            Some(Named {
+                app_id: text(w, "appId"),
+                title: text(w, "title")?,
+            })
+        })
+        .collect()
+}
+
+/// The windows of a `workspaces.get` view to pick from (see [`shown`]), top
+/// first. The compositor does not say how they stack, so the one that had
+/// the keyboard last counts as the top, as in the QML and MinkaMon.
+pub fn rects(view: &Value) -> Vec<WindowRect> {
+    let mut rects: Vec<WindowRect> = shown(view)
+        .into_iter()
+        .filter_map(|(monitor, w)| {
+            let rect = w.get("rect")?;
+            let n = |key: &str| rect.get(key).and_then(Value::as_f64);
+            Some(WindowRect {
+                title: text(w, "title").unwrap_or_default(),
+                monitor: monitor.to_owned(),
+                rect: Rect {
+                    x: n("x")? + CHROME_INSET,
+                    y: n("y")? + CHROME_INSET,
+                    width: n("width")? - 2.0 * CHROME_INSET,
+                    height: n("height")? - 2.0 * CHROME_INSET,
+                },
+                last_focused_at: w
+                    .get("lastFocusedAt")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0),
+            })
+        })
+        .collect();
+    // Stable, so windows focused at the same moment keep the view's order.
+    rects.sort_by(|a, b| b.last_focused_at.total_cmp(&a.last_focused_at));
+    rects
+}
+
+/// The output under the pointer in a `workspaces.get` view.
+pub fn current_monitor(view: &Value) -> Option<String> {
+    view.get("currentMonitor")
+        .and_then(Value::as_str)
+        .filter(|m| !m.is_empty())
+        .map(str::to_owned)
 }
 
 /// The windows with `role`, from the compositor's IPC.
@@ -316,6 +386,66 @@ mod tests {
         );
         assert_eq!(with_role(&view, "minkamon.gpu"), []);
         assert_eq!(with_role(&json!({}), "minkamon.disk"), []);
+    }
+
+    #[test]
+    fn rects_are_shown_windows_inset_and_last_focused_first() {
+        let window = |title: &str, x: f64, focused_at: f64| {
+            json!({
+                "title": title, "minimized": false, "lastFocusedAt": focused_at,
+                "rect": {"x": x, "y": 100, "width": 800, "height": 600},
+            })
+        };
+        let view = json!({
+            "currentMonitor": "DP-1",
+            "monitors": [
+                {"name": "eDP-1", "workspaces": [
+                    {"active": true, "windows": [
+                        window("older", 0.0, 1000.0),
+                        {"title": "hidden", "minimized": true, "lastFocusedAt": 9000,
+                         "rect": {"x": 0, "y": 0, "width": 100, "height": 100}},
+                        {"title": "no rect", "minimized": false, "lastFocusedAt": 9000},
+                        window("newest", 50.0, 3000.0),
+                    ]},
+                    {"active": false, "windows": [window("elsewhere", 0.0, 8000.0)]},
+                ]},
+                {"name": "DP-1", "workspaces": [
+                    {"active": true, "windows": [
+                        window("between", 1600.0, 2000.0),
+                        {"minimized": false, "rect": {"x": 1, "y": 2, "width": 30, "height": 40}},
+                    ]},
+                ]},
+            ],
+        });
+        let got = rects(&view);
+        let order: Vec<(&str, &str)> = got
+            .iter()
+            .map(|w| (w.title.as_str(), w.monitor.as_str()))
+            .collect();
+        // A window never focused (no lastFocusedAt, no title) comes last.
+        assert_eq!(
+            order,
+            [
+                ("newest", "eDP-1"),
+                ("between", "DP-1"),
+                ("older", "eDP-1"),
+                ("", "DP-1")
+            ]
+        );
+        assert_eq!(
+            got[0].rect,
+            Rect {
+                x: 64.0,
+                y: 114.0,
+                width: 772.0,
+                height: 572.0
+            }
+        );
+        assert_eq!(got[0].last_focused_at, 3000.0);
+        assert_eq!(rects(&json!({})), []);
+        assert_eq!(current_monitor(&view).as_deref(), Some("DP-1"));
+        assert_eq!(current_monitor(&json!({"currentMonitor": ""})), None);
+        assert_eq!(current_monitor(&json!({})), None);
     }
 
     #[test]

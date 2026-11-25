@@ -101,10 +101,7 @@ pub fn choose<'a>(
 pub fn focused_output() -> Result<String, String> {
     let view = minka_ipc::request_blocking("workspaces.get", serde_json::json!({}), FOCUS_TIMEOUT)
         .map_err(|e| format!("the compositor's IPC: {e}"))?;
-    view.get("currentMonitor")
-        .and_then(|m| m.as_str())
-        .filter(|m| !m.is_empty())
-        .map(str::to_owned)
+    crate::window::current_monitor(&view)
         .ok_or_else(|| "workspaces.get names no currentMonitor".into())
 }
 

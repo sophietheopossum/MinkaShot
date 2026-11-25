@@ -22,8 +22,10 @@ minka-note = { path = "../minka-note" }
 # outputs and the shm capture of them (and implies "wayland"); the PNG encoder
 # is anti_webui::app::headless.
 anti-webui = { path = "../AntiWebUI/src/anti-webui", default-features = false, features = ["wayland-shell"] }
-# The ShojiWM IPC, for the focused output.
+# The ShojiWM IPC, for the focused output, and the Print broadcast.
 minka-ipc = { package = "MinkaIPC", path = "../MinkaIPC" }
+# The daemon's lock, and the commands to it (minka-instance/, at the top).
+minka-instance = { path = "../minka-instance" }
 serde_json = "1"
 # renameat2(RENAME_NOREPLACE), so a default name never replaces an earlier shot.
 libc = "0.2"
