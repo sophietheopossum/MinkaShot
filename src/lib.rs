@@ -1,6 +1,6 @@
 //! MinkaShot, Minka's screenshot tool, on AntiWebUI.
 //!
-//! So far the command line: `minkashot full [<output>] [<path>]` and
+//! The command line: `minkashot full [<output>] [<path>]` and
 //! `minkashot region <output> <x,y,w,h> [<path>]` capture an output, and
 //! `minkashot win [<window>] [<path>]` one window's own picture, under
 //! others or not (no raising, no focus taken), through the toolkit's
@@ -12,11 +12,9 @@
 //! give up on a compositor that does not answer. `minkashot list` lists the
 //! windows.
 //!
-//! MinkaCap, the window capture this replaces, is a name of this too, until
-//! the QML daemon that runs it is gone: see [`cap_main`].
-//!
-//! The interactive overlay (Print) is `minkashot daemon` (`daemon.rs`),
-//! which replaces the QML tree beside this crate. The session starts it
+//! The interactive overlay (Print) is `minkashot daemon` (`daemon.rs`). It
+//! replaced the Quickshell daemon that was beside this crate until
+//! 26/11/2026, which is "the QML" in these comments. The session starts it
 //! through minka-keep (`packaging/minka-keep`), which logs it to
 //! `~/.local/state/minka/minkashot.log` and restarts it if it dies. One per
 //! session, it hears Print and answers `minkashot interactive|cancel|status`,
@@ -50,27 +48,5 @@ use std::process::ExitCode;
 /// What MinkaDE's one binary runs as `minkashot`.
 pub fn main() -> ExitCode {
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
-    ExitCode::from(cli::run(&args))
-}
-
-/// What MinkaDE's one binary runs as `MinkaCap`, the window capture that
-/// was its own crate: `MinkaCap grab <window> <path>` is `minkashot win`,
-/// and `MinkaCap list` is `minkashot list`, with minkashot's exit statuses.
-/// The QML MinkaShot daemon runs it for its window shots
-/// (`${MINKA_CAP_BIN:-/usr/bin/MinkaCap} grab <title> <path>`), so it goes
-/// with that.
-pub fn cap_main() -> ExitCode {
-    let mut args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
-    match args.first().and_then(|a| a.to_str()) {
-        Some("grab") if args.len() == 3 => args[0] = "win".into(),
-        Some("list") if args.len() == 1 => {}
-        _ => {
-            minka_note::note!(
-                "MinkaCap: usage: MinkaCap list | grab <window> <path> \
-                 (which are minkashot list and minkashot win <window> [<path>])"
-            );
-            return ExitCode::from(2);
-        }
-    }
     ExitCode::from(cli::run(&args))
 }

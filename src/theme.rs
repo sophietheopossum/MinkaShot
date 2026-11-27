@@ -1,6 +1,5 @@
 //! Proustite (the `proustite` crate, generated from Proustite.qml) and
-//! MinkaShot's own tokens, as `services/Theme.qml` is a facade over the QML
-//! singleton with the capture overlay's extras.
+//! MinkaShot's own tokens, the capture overlay's extras.
 
 use anti_webui::prelude::Color;
 use anti_webui_md3e::{Density, set_density};
